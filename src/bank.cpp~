@@ -1,0 +1,264 @@
+#include <bank.h>
+
+/**
+ * @brief prints account information
+ */
+void Bank::print_account() {
+  for (int i = 0; i < num; i++) {
+    pthread_rwlock_wrlock(&accounts[i].lock);
+    cout << "ID# " << accounts[i].accountID << " | " << accounts[i].balance << endl;
+    pthread_rwlock_unlock(&accounts[i].lock);
+  }
+
+  pthread_mutex_lock(&bank_lock);
+  cout << "Success: " << num_succ << " Fails: " << num_fail << endl;
+  pthread_mutex_unlock(&bank_lock);
+}
+
+/**
+ * @brief helper function to increment the bank variable `num_fail` and log 
+ *        message.
+ * 
+ * @param message
+ */
+void Bank::recordFail(char *message) {
+  pthread_mutex_lock(&bank_lock);
+  cout << message << endl;
+  num_fail++;
+  pthread_mutex_unlock(&bank_lock);
+}
+
+/**
+ * @brief helper function to increment the bank variable `num_succ` and log 
+ *        message.
+ * 
+ * @param message
+ */
+void Bank::recordSucc(char *message) {
+  pthread_mutex_lock(&bank_lock);
+  cout << message << endl;
+  num_succ++;
+  pthread_mutex_unlock(&bank_lock);
+}
+
+/**
+ * @brief Construct a new Bank:: Bank object.
+ * 
+ * Requirements:
+ *  - The function should initialize the private variables.
+ *  - Create a new array[N] of type Accounts. 
+ *  - Initialize each account (HINT: there are three fields to initialize)  
+ * 
+ * @param N 
+ */
+Bank::Bank(int num_accounts) {
+  pthread_mutex_init(&bank_lock, NULL);
+  accounts = new Account[num_accounts];
+  for(int i = 0; i < num_accounts; ++i){
+    accounts[i].accountID = i;
+    accounts[i].balance = 0;
+    pthread_rwlock_init(&accounts[i].lock, NULL);
+  }
+  num = num_accounts;
+  num_succ = 0;
+  num_fail = 0;
+}
+
+/**
+ * @brief Destroy the Bank:: Bank object
+ * 
+ * Requirements:
+ *  - Make sure to destroy all locks. 
+ *  - Make sure to free all memory
+ * 
+ */
+Bank::~Bank() {
+  pthread_mutex_lock(&bank_lock);
+
+   for(int i = 0; i < num; ++i){
+     pthread_rwlock_destroy(&accounts[i].lock);
+       }
+   free(accounts);
+ 
+   pthread_mutex_unlock(&bank_lock);
+   pthread_mutex_destroy(&bank_lock);
+}
+
+/**
+ * @brief Returns balance of an account
+ * @param workerID the ID of the worker (thread)
+ * @param accountID the account ID to deposit
+ * @return int
+ */
+int Bank::CheckBalance(int workerID, int accountID){
+
+  
+  int balance;
+  /*Here I implement a read lock so that checkbalance can occur simultaneously in an account.
+   *So If checkBalance is called on account 5, it can be checked multiple times at the same time.
+   *However, Deposit, Withdraw, and Transfer are all blocked as they use the account write lock.
+   *A read/write lock on read blocks write locks, but not other read lock.
+   */
+  pthread_rwlock_rdlock(&accounts[accountID].lock);
+  balance = accounts[accountID].balance;
+  pthread_rwlock_unlock(&accounts[accountID].lock);
+
+  char buffer[2048];
+  pthread_mutex_lock(&bank_lock);
+  sprintf(buffer, "Worker %d found account %d to have current balance %d", workerID, accountID, balance);
+  cout << buffer << endl; //we do not want to record success so just print using cout
+  pthread_mutex_unlock(&bank_lock);
+  return 0;
+}
+
+
+
+
+/**
+ * @brief Adds money to an account 
+ * 
+ * Requirements:
+ *  - Make sure to log in the following format
+ *    `Worker [worker_id] completed ledger [ledger_id]: deposit [amount] into account [account]`
+ * 
+ * @param workerID the ID of the worker (thread)
+ * @param ledgerID the ID of the ledger entry
+ * @param accountID the account ID to deposit 
+ * @param amount the amount deposited
+ * @return int 
+ */
+
+int Bank::deposit(int workerID, int ledgerID, int accountID, int amount) {
+
+  /**
+   *So now I am using the write lock of the accounts read/write lock.
+   *This means that Read locks block this write lock, as well as other write locks.
+   *So checkbalance will block deposit if called on the same account
+   */
+   pthread_rwlock_wrlock(&accounts[accountID].lock); 
+   accounts[accountID].balance += amount;
+   pthread_rwlock_unlock(&accounts[accountID].lock);
+
+   char buffer[2048];
+   pthread_mutex_lock(&bank_lock);
+   sprintf(buffer, "Worker %d completed ledger %d: deposit %d into account %d",workerID, ledgerID, amount, accountID);
+   pthread_mutex_unlock(&bank_lock);
+   recordSucc(buffer);
+    
+  return 0;
+}
+
+/**
+ * @brief Withdraws money from an account
+ * 
+ * Requirements:
+ *  - Make sure the account has a large enough balance. 
+ *    - Case 1: withdraw amount <= balance, log success 
+ *    - Case 2: log failure
+ * 
+ * @param workerID the ID of the worker (thread)
+ * @param ledgerID the ID of the ledger entry
+ * @param accountID the account ID to withdraw 
+ * @param amount the amount withdrawn
+ * @return int 0 on success -1 on failure
+ */
+int Bank::withdraw(int workerID, int ledgerID, int accountID, int amount) {
+  int flag = -1;
+  
+  
+  /**
+   *So now I am using the write lock of the accounts read/write lock.
+   *This means that Read locks block this write lock, as well as other write locks.
+   *So checkbalance will block withdraw if called on the same account
+   */
+  pthread_rwlock_wrlock(&accounts[accountID].lock);                         
+  if(accounts[accountID].balance - amount < 0){flag = 1;}
+  else{accounts[accountID].balance -= amount;
+    flag = 0;
+  }
+  pthread_rwlock_unlock(&accounts[accountID].lock);                                                                                                                                                                                 
+
+  if(flag){
+    char buffer[2048];
+    pthread_mutex_lock(&bank_lock);
+    sprintf(buffer, "Worker %d failed to complete ledger %d: withdraw %d from account %d",workerID, ledgerID, amount, accountID);
+    pthread_mutex_unlock(&bank_lock);
+    recordFail(buffer);
+    return -1;
+  }
+  else{
+    char buffer[2048];
+    pthread_mutex_lock(&bank_lock);
+    sprintf(buffer, "Worker %d completed ledger %d: withdraw %d from account %d",workerID, ledgerID, amount, accountID);
+    pthread_mutex_unlock(&bank_lock);
+    recordSucc(buffer);
+    }
+  return 0;
+}
+
+/**
+ * @brief Transfer from one account to another
+ * 
+ * Requirements:
+ *  - Make sure there is enough money in the FROM account
+ *  - Be careful with the locking order
+ *  
+ * 
+ * @param workerID the ID of the worker (thread)
+ * @param ledgerID the ID of the ledger entry
+ * @param srcID the account to transfer money out 
+ * @param destID the account to receive the money
+ * @param amount the amount to transfer
+ * @return int 0 on success -1 on error
+ */
+int Bank::transfer(int workerID, int ledgerID, int srcID, int destID,unsigned int amount) {
+  
+   int flag = 0;
+   
+   
+  /**
+   *So now I am using the write lock of the accounts read/write lock.
+   *This means that Read locks block this write lock, as well as other write locks.
+   *So checkbalance will block transfer if called on the same account
+   */
+   if(srcID == destID){return -1;}
+   
+   
+   if(srcID < destID){
+     pthread_rwlock_wrlock(&accounts[srcID].lock);
+     pthread_rwlock_wrlock(&accounts[destID].lock); 
+   }
+   else{
+      pthread_rwlock_wrlock(&accounts[destID].lock);
+      pthread_rwlock_wrlock(&accounts[srcID].lock);
+   }
+
+   
+    if(accounts[srcID].balance >= amount){
+      flag = 1;
+      accounts[srcID].balance -= amount;
+      accounts[destID].balance += amount;
+    }
+    
+
+   pthread_rwlock_unlock(&accounts[srcID].lock);
+   pthread_rwlock_unlock(&accounts[destID].lock);
+
+   if(flag == 0){
+    char buffer[2048];
+    pthread_mutex_lock(&bank_lock);
+    sprintf(buffer, "Worker %d failed to complete ledger %d: transfer %d from account %d to account %d",workerID, ledgerID, amount, srcID, destID);
+    pthread_mutex_unlock(&bank_lock);
+    recordFail(buffer);
+    return -1;
+  }
+  else{
+    char buffer[2048];
+    pthread_mutex_lock(&bank_lock);
+    sprintf(buffer, "Worker %d completed ledger %d: transfer %d from account %d to account %d",workerID, ledgerID, amount, srcID, destID);
+    pthread_mutex_unlock(&bank_lock);
+    recordSucc(buffer);
+    }
+
+    return 0;
+}

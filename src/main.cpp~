@@ -1,0 +1,15 @@
+#include <ledger.h>
+
+int main(int argc, char* argv[]) {
+  if (argc != 5) {
+    cerr << "Usage: " << argv[0] << "<num_accounts> <num_of_writer_threads> <num_of_reader_threads> <leader_file>\n" << endl;
+    exit(-1);
+  }
+
+  int num_accounts = atoi(argv[1]);
+  int num_workers = atoi(argv[2]);
+  int num_readers = atoi(argv[3]);
+  InitBank(num_accounts, num_workers, num_readers, argv[4]);
+
+  return 0;
+}
